@@ -89,7 +89,7 @@ plot(fit, data = iris, node = 5)
 To make predictions:
 
 ``` r
-# Prediction only
+# Prediction only.
 predictions <- predict(fit, iris)
 head(predictions)
 #> [1] "setosa" "setosa" "setosa" "setosa" "setosa" "setosa"
