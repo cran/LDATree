@@ -15,7 +15,7 @@ fitCV <- Treee(Species~., data = iris, pruneMethod = "CV")
 
 ## ----fig.asp=0.618,out.width = "100%",fig.align = "center", echo=TRUE---------
 # View the overall tree
-plot(fit) # Tips: Try clicking on the nodes...
+# plot(fit) # Tips: Try clicking on the nodes...
 
 ## ----fig.asp=0.618,out.width = "100%",fig.align = "center", echo=TRUE---------
 # Three types of individual plots
