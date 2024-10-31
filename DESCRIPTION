@@ -1,27 +1,27 @@
 Package: LDATree
-Title: Classification Trees with Linear Discriminant Analysis at
-        Terminal Nodes
-Version: 0.1.2
+Title: Oblique Classification Trees with Uncorrelated Linear
+        Discriminant Analysis Splits
+Version: 0.2.0
 Authors@R: 
-    person("Siyu", "Wang", , "swang739@wisc.edu", role = c("cre", "aut", "cph"),
+    person(given = "Siyu",
+           family = "Wang",
+           role = c("aut", "cre", "cph"),
+           email = "iamwangsiyu@gmail.com",
            comment = c(ORCID = "0009-0005-2098-7089"))
-Description: A classification tree method that uses LDA (Linear
-    Discriminant Analysis) for variable selection, split determination,
-    and model fitting in terminal nodes.  It automatically handles missing
-    values and offers visualization tools.
+Description: A classification tree method that uses Uncorrelated Linear Discriminant Analysis (ULDA) for variable selection, split determination, and model fitting in terminal nodes.  It automatically handles missing values and offers visualization tools. For more details, see Wang (2024) <doi:10.48550/arXiv.2410.23147>.
 License: MIT + file LICENSE
 URL: https://github.com/Moran79/LDATree,
         http://iamwangsiyu.com/LDATree/
 BugReports: https://github.com/Moran79/LDATree/issues
-Imports: ggplot2, lifecycle, magrittr, scales, stats, visNetwork
+Imports: folda, ggplot2, grDevices, magrittr, stats, utils, visNetwork
 Encoding: UTF-8
-RoxygenNote: 7.2.3
+RoxygenNote: 7.3.2
 Suggests: knitr, rmarkdown, testthat (>= 3.0.0)
 Config/testthat/edition: 3
 VignetteBuilder: knitr
 NeedsCompilation: no
-Packaged: 2023-08-25 19:39:05 UTC; moran
-Author: Siyu Wang [cre, aut, cph] (<https://orcid.org/0009-0005-2098-7089>)
-Maintainer: Siyu Wang <swang739@wisc.edu>
+Packaged: 2024-10-31 03:32:50 UTC; moran
+Author: Siyu Wang [aut, cre, cph] (<https://orcid.org/0009-0005-2098-7089>)
+Maintainer: Siyu Wang <iamwangsiyu@gmail.com>
 Repository: CRAN
-Date/Publication: 2023-08-25 22:40:10 UTC
+Date/Publication: 2024-10-31 08:10:07 UTC

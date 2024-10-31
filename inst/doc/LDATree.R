@@ -1,58 +1,52 @@
-## ---- include = FALSE---------------------------------------------------------
+## ----include = FALSE----------------------------------------------------------
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>"
 )
 library(LDATree)
 
-## ----fig.asp=0.618,out.width = "100%",fig.align = "center", echo=TRUE---------
-# Build a tree using direct-stopping rule
-fit <- Treee(Species~., data = iris)
-
-# Build a tree using cross-validation
+## ----fig.asp=0.618,out.width = "100%",fig.align = "center"--------------------
+library(LDATree)
 set.seed(443)
-fitCV <- Treee(Species~., data = iris, pruneMethod = "CV")
+diamonds <- as.data.frame(ggplot2::diamonds)[sample(53940, 2000),]
+datX <- diamonds[, -2]
+response <- diamonds[, 2] # we try to predict "cut"
+fit <- Treee(datX = datX, response = response, verbose = FALSE) # by default, it is a pre-stopping FoLDTree
+# fit <- Treee(datX = datX, response = response, verbose = FALSE, ldaType = "all", pruneMethod = "post") # if you want to fit a post-pruned LDATree.
 
-## ----fig.asp=0.618,out.width = "100%",fig.align = "center", echo=TRUE---------
-# View the overall tree
-# plot(fit) # Tips: Try clicking on the nodes...
+## ----fig.asp=0.618,out.width = "80%",fig.align = "center", eval=FALSE---------
+#  # View the overall tree.
+#  plot(fit)
 
-## ----fig.asp=0.618,out.width = "100%",fig.align = "center", echo=TRUE---------
-# Three types of individual plots
-# 1. Scatter plot on first two LD scores
-plot(fit, data = iris, node = 1)
+## ----out.width = '100%',fig.align = "center", echo = FALSE--------------------
+knitr::include_graphics("README-plot1-1.png")
 
-# 2. Density plot on the first LD score
-plot(fit, data = iris, node = 3)
+## ----echo=TRUE, eval=FALSE----------------------------------------------------
+#  # Three types of individual plots
+#  # 1. Scatter plot on first two LD scores
+#  plot(fit, datX = datX, response = response, node = 1)
 
+## ----out.width = '100%',fig.align = "center", echo = FALSE--------------------
+knitr::include_graphics("README-plot2-1.png")
+
+## ----echo=TRUE, eval=FALSE----------------------------------------------------
+#  # 2. Density plot on the first LD score
+#  plot(fit, datX = datX, response = response, node = 7)
+
+## ----out.width = '100%',fig.align = "center", echo = FALSE--------------------
+knitr::include_graphics("README-plot2-2.png")
+
+## -----------------------------------------------------------------------------
 # 3. A message
-plot(fit, data = iris, node = 5)
+plot(fit, datX = datX, response = response, node = 2)
 
 ## ----fig.asp=0.618,out.width = "100%",fig.align = "center", echo=TRUE---------
-# Prediction only
-predictions <- predict(fit, iris)
+# Prediction only.
+predictions <- predict(fit, datX)
 head(predictions)
 
 ## ----fig.asp=0.618,out.width = "100%",fig.align = "center", echo=TRUE---------
 # A more informative prediction
-predictions <- predict(fit, iris, type = "all")
+predictions <- predict(fit, datX, type = "all")
 head(predictions)
-
-## ----fig.asp=0.618,out.width = "100%",fig.align = "center", echo=TRUE---------
-# Experimental feature: LDAGrove
-# If you use CV to prune the tree, you can try an ensemble prediction
-predictions <- predict(fitCV, iris, type = "grove")
-head(predictions)
-
-## ----fig.asp=0.618,out.width = "100%",fig.align = "center", echo=TRUE---------
-# 
-irisMissing <- iris
-for(i in 1:4) irisMissing[sample(150,20),i] <- NA
-fitMissing <- Treee(Species~., data = irisMissing)
-plot(fitMissing, data = irisMissing, node = 1)
-
-## ----fig.asp=0.618,out.width = "100%",fig.align = "center", echo=TRUE---------
-fitLDAgsvd <- ldaGSVD(Species~., data = iris)
-predictionsLDAgsvd <- predict(fitLDAgsvd, newdata = iris)
-mean(predictionsLDAgsvd == iris$Species)
 

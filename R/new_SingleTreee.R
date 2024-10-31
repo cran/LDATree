@@ -1,101 +1,95 @@
-new_SingleTreee <- function(x,
+#' Create a New Decision Tree
+#'
+#' This function builds a new decision tree based on input data and a variety of
+#' parameters, including LDA type, node model, and thresholds for splitting. The
+#' tree is grown recursively by splitting nodes, and child nodes are added until
+#' a stopping condition is met.
+#'
+#' @noRd
+new_SingleTreee <- function(datX,
                             response,
-                            idxCol,
-                            idxRow,
-                            missingMethod,
-                            splitMethod,
+                            ldaType,
+                            nodeModel,
                             maxTreeLevel,
                             minNodeSize,
-                            verbose,
-                            currentLevel = 0,
-                            parentIndex = 0,
-                            treeList = structure(list(), class = "SingleTreee")){
+                            pThreshold,
+                            prior,
+                            misClassCost,
+                            missingMethod,
+                            kSample,
+                            verbose){
 
-  #> Some notes to clarify the parameters...
+  treeeList = structure(list(), class = "Treee") # save the tree
 
-  # Data Cleaning -----------------------------------------------------------
+  ### Initialize the first Node ###
 
-  # Remove empty levels due to partition
-  xCurrent <- droplevels(x[idxRow, idxCol, drop = FALSE])
-  responseCurrent <- droplevels(response[idxRow])
-  #> Notes: xCurrent / responseCurrent are ephemeral and
-  #> will be removed once the current node is completed
-
-  # Fix the missing values
-  imputedSummary <- missingFix(data = xCurrent, missingMethod = missingMethod)
-  xCurrent <- imputedSummary$data
-
-  #> NOTICE: If a column is constant, then it will be constant in all its subsets,
-  #> so we delete those columns in its descendents.
-
-  idxCurrColKeep <- constantColCheck(data = xCurrent)
-  xCurrent <- xCurrent[,idxCurrColKeep, drop = FALSE]
-
-  # change the candidates in its children nodes, there are FLAG variable as well
-  idxCol <- idxCol[idxCurrColKeep[idxCurrColKeep <= length(idxCol)]]
+  nodeStack <- c(1)
+  treeeList[[1]] <- new_TreeeNode(datX = datX,
+                                 response = response,
+                                 idxCol = seq_len(ncol(datX)),
+                                 idxRow = seq_len(nrow(datX)),
+                                 ldaType = ldaType,
+                                 nodeModel = nodeModel,
+                                 maxTreeLevel = maxTreeLevel,
+                                 minNodeSize = minNodeSize,
+                                 prior = prior,
+                                 misClassCost = misClassCost,
+                                 missingMethod = missingMethod,
+                                 kSample = kSample,
+                                 currentLevel = 0,
+                                 parentIndex = 0)
 
 
-  # Build the Treee ---------------------------------------------------------
+  while(length(nodeStack) != 0){
+    currentIdx <- nodeStack[1]; nodeStack <- nodeStack[-1] # pop the first element
+    if(verbose) cat("The current index is:", currentIdx, "\n")
 
-  currentIndex <- length(treeList) + 1 # current tree node number
-  # cat('The current node index is', currentIndex, '\n')
+    if(treeeList[[currentIdx]]$stopInfo == "Normal"){ # if it has (potential) child nodes
 
-  #> check stopping
-  stopFlag <- stopCheck(responseCurrent = responseCurrent,
-                        idxCol = idxCol,
-                        maxTreeLevel = maxTreeLevel,
-                        minNodeSize = minNodeSize,
-                        currentLevel = currentLevel) #  # 0/1/2: Normal/Stop+Median/Stop+LDA
+      trainIndex <- attr(treeeList[[currentIdx]]$splitFun, "splitRes") # distribute the training set
 
-  # Build current node
-  treeList[[currentIndex]] <- new_TreeeNode(xCurrent = xCurrent,
-                                            responseCurrent = responseCurrent,
-                                            idxCol = idxCol,
-                                            idxRow = idxRow,
-                                            currentLevel = currentLevel,
-                                            currentIndex = currentIndex,
-                                            parentIndex = parentIndex,
-                                            misReference = imputedSummary$ref,
-                                            nodeModel = ifelse(stopFlag == 1, "mode", "LDA"))
+      ### Get child nodes ###
 
-  # if (treeList[[currentIndex]]$currentLoss == 0) stopFlag = 1 # LDA has no error
+      childNodes <- lapply(seq_along(trainIndex),
+                           function(i) new_TreeeNode(datX = datX,
+                                                     response = response,
+                                                     idxCol = treeeList[[currentIdx]]$idxCol,
+                                                     idxRow = treeeList[[currentIdx]]$idxRow[trainIndex[[i]]],
+                                                     ldaType = ldaType,
+                                                     nodeModel = nodeModel,
+                                                     maxTreeLevel = maxTreeLevel,
+                                                     minNodeSize = minNodeSize,
+                                                     prior = prior,
+                                                     misClassCost = misClassCost,
+                                                     missingMethod = missingMethod,
+                                                     kSample = kSample,
+                                                     currentLevel = treeeList[[currentIdx]]$currentLevel + 1,
+                                                     parentIndex = currentIdx))
 
-  if (stopFlag == 0) {
-    splitGini <- GiniSplitScreening(xCurrent = xCurrent,
-                                    responseCurrent = responseCurrent,
-                                    idxRow = idxRow,
-                                    minNodeSize = minNodeSize,
-                                    modelLDA = treeList[[currentIndex]]$nodePredict)
+      ### Stopping check ###
 
-    if(is.null(splitGini)) return(treeList) # No cut due to ties
+      #> 1. update the p-value for loss drop
+      lossBefore <- treeeList[[currentIdx]]$currentLoss
+      lossAfter <- do.call(sum, lapply(childNodes, function(node) node$currentLoss))
+      treeeList[[currentIdx]]$alpha <-  getOneSidedPvalue(N = length(treeeList[[currentIdx]]$idxRow),
+                                                         lossBefore = lossBefore,
+                                                         lossAfter = lossAfter)
 
-    leftIndex <- length(treeList) + 1
-    treeList <- new_SingleTreee(x = x,
-                                response = response,
-                                idxCol = idxCol,
-                                idxRow = splitGini$left,
-                                splitMethod = splitMethod,
-                                maxTreeLevel = maxTreeLevel,
-                                minNodeSize = minNodeSize,
-                                missingMethod = missingMethod,
-                                currentLevel = currentLevel + 1,
-                                parentIndex = currentIndex,
-                                treeList = treeList)
+      #> 2. pre-stopping
+      if(treeeList[[currentIdx]]$alpha >= pThreshold){
+        treeeList[[currentIdx]]$stopInfo = "Split is not significant"
+        next
+      }
 
-    rightIndex <- length(treeList) + 1 # Right branch
-    treeList <- new_SingleTreee(x = x,
-                                response = response,
-                                idxCol = idxCol,
-                                idxRow = splitGini$right,
-                                splitMethod = splitMethod,
-                                maxTreeLevel = maxTreeLevel,
-                                minNodeSize = minNodeSize,
-                                missingMethod = missingMethod,
-                                currentLevel = currentLevel + 1,
-                                parentIndex = currentIndex,
-                                treeList = treeList)
-    treeList[[currentIndex]]$splitCut <- splitGini$cut
-    treeList[[currentIndex]]$children <- c(leftIndex, rightIndex)
+      #> 3. Put child nodes in the tree
+      childIdx <- seq_along(childNodes) + length(treeeList)
+      treeeList[[currentIdx]]$children <- childIdx
+      nodeStack <- c(nodeStack, childIdx)
+      for(i in seq_along(childIdx)) treeeList[[childIdx[i]]] <- childNodes[[i]]
+    }
   }
-  return(treeList)
+
+  for(i in seq_along(treeeList)) treeeList[[i]]$currentIndex <- i # assign the currentIndex
+  treeeList <- updateAlphaInTree(treeeList)
+  return(treeeList)
 }

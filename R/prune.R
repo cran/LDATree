@@ -1,129 +1,171 @@
+#' Prune a Decision Tree
+#'
+#' This function performs pruning on an existing decision tree by using
+#' cross-validation to assess the best level of tree complexity, balancing the
+#' trade-off between tree size and predictive performance.
+#'
+#' @noRd
 prune <- function(oldTreee,
-                  x,
+                  datX,
                   response,
-                  idxCol,
-                  idxRow,
-                  splitMethod,
+                  ldaType,
+                  nodeModel,
+                  numberOfPruning,
                   maxTreeLevel,
                   minNodeSize,
-                  numberOfPruning,
+                  pThreshold,
+                  prior,
+                  misClassCost,
                   missingMethod,
+                  kSample,
                   verbose){
 
-
-  # Parameter Clean Up ------------------------------------------------------
-
-  oldTreee <- updateAlphaInTree(oldTreee)
-  treeeSaved = oldTreee
-
-  # pruning and error estimate ----------------------------------------------
-
+  treeeSaved = oldTreee # saved a copy for cutting
   idxCV <- sample(seq_len(numberOfPruning), length(response), replace = TRUE)
-  savedGrove <- sapply(seq_len(numberOfPruning), function(i) new_SingleTreee(x = x,
-                                                                           response = response,
-                                                                           idxCol = idxCol,
-                                                                           idxRow = idxRow[idxCV!=i],
-                                                                           splitMethod = splitMethod,
-                                                                           maxTreeLevel = maxTreeLevel,
-                                                                           minNodeSize = minNodeSize,
-                                                                           missingMethod = missingMethod), simplify = FALSE)
+  treeeForPruning <- vector(mode = "list", length = numberOfPruning)
 
-  treeeForPruning <- sapply(savedGrove, updateAlphaInTree, simplify = FALSE)
+  if(verbose){
+    cat('\nPruning: Grow the trees...\n')
+    pbGrowTree <- utils::txtProgressBar(min = 0, max = numberOfPruning, style = 3)
+  }
 
-  CV_Table <- data.frame()
-  numOfPruning <- 0
+  for(i in seq_len(numberOfPruning)){
+    treeeForPruning[[i]] <- predict(new_SingleTreee(datX = datX[idxCV != i, , drop = FALSE],
+                                                    response = response[idxCV != i],
+                                                    ldaType = ldaType,
+                                                    nodeModel = nodeModel,
+                                                    maxTreeLevel = maxTreeLevel,
+                                                    minNodeSize = minNodeSize,
+                                                    pThreshold = pThreshold,
+                                                    prior = prior,
+                                                    misClassCost = misClassCost,
+                                                    missingMethod = missingMethod,
+                                                    kSample = kSample,
+                                                    verbose = FALSE),
+                                    newdata = datX[idxCV == i, , drop = FALSE],
+                                    insideCV = TRUE,
+                                    obsY = response[idxCV == i])
+    if(verbose) utils::setTxtProgressBar(pbGrowTree, i)
+  }
+
+  if(verbose){
+    cat('\nPruning: Prune the trees...\n')
+    pbPruneTree <- utils::txtProgressBar(min = 0, max = length(treeeSaved), style = 3)
+  }
+
+  CV_Table <- data.frame(); pruningCounter <- 0
+
   while(TRUE){
     nodesCount <- sum(sapply(oldTreee, function(treeeNode) is.null(treeeNode$pruned)))
-    if(verbose) cat("There are ",nodesCount," node(s) left in the tree.\n")
-    meanAndSE <- getMeanAndSE(treeeListList = treeeForPruning,
-                              idxCV = idxCV,
-                              x = x,
-                              response = response)
+    if(verbose) utils::setTxtProgressBar(pbPruneTree, length(treeeSaved) - nodesCount)
 
+    meanAndSE <- getMeanAndSE(treeeListList = treeeForPruning)
     currentCutAlpha = getCutAlpha(treeeList = oldTreee)
-    # summary output
-    CV_Table <- rbind(CV_Table, c(numOfPruning, nodesCount, meanAndSE, currentCutAlpha))
-    if (nodesCount == 1) {break}
+    CV_Table <- rbind(CV_Table, c(pruningCounter, nodesCount, meanAndSE, currentCutAlpha))
+    if (nodesCount == 1) {
+      if(verbose) utils::setTxtProgressBar(pbPruneTree, length(treeeSaved))
+      break
+    }
 
-    # Cut the treee
     oldTreee <- pruneTreee(treeeList = oldTreee, alpha = currentCutAlpha)
-    treeeForPruning <- sapply(treeeForPruning, function(treeeList) pruneTreee(treeeList = treeeList, alpha = currentCutAlpha), simplify = FALSE)
-    numOfPruning <- numOfPruning + 1
+    treeeForPruning <- lapply(treeeForPruning, function(treeeList) pruneTreee(treeeList = treeeList, alpha = currentCutAlpha))
+    pruningCounter <- pruningCounter + 1
   }
 
   colnames(CV_Table) <- c("treeeNo", "nodeCount", "meanMSE", "seMSE", "alpha")
 
   # Evaluation --------------------------------------------------------------
 
-  kSE = 0.1
+  kSE = 0.25
   pruneThreshold <- (CV_Table$meanMSE + kSE * CV_Table$seMSE)[which.min(CV_Table$meanMSE)]
   idxFinal <- dim(CV_Table)[1] + 1 - which.max(rev(CV_Table$meanMSE <= pruneThreshold))
-  for(i in seq_len(idxFinal-1)){
-    treeeSaved <- pruneTreee(treeeList = treeeSaved, alpha = CV_Table$alpha[i])
-  }
-  treeeNew <- dropNodes(treeeSaved)
+  for(i in seq_len(idxFinal-1)) treeeSaved <- pruneTreee(treeeList = treeeSaved, alpha = CV_Table$alpha[i])
 
-  return(list(treeeNew = treeeNew,
-              CV_Table = CV_Table,
-              savedGrove = savedGrove))
+  return(list(treeeNew = dropNodes(treeeSaved), CV_Table = CV_Table))
 }
 
-updateAlphaInTree <- function(treeeList){
-  #> Purpose: Calculate alpha, and make it monotonic
-  #> assumption: the tree is a pre-order Depth-First tree.
-  #> so loop backward will update the alpha correctly
 
+#' Update Alpha Values in a Tree
+#'
+#' This function calculates and updates the alpha values for each node in the
+#' decision tree. Alpha is a measure (p-value) of the improvement in loss after
+#' pruning a subtree.
+#'
+#' @noRd
+updateAlphaInTree <- function(treeeList){
+  #> assumption: the index of the children must be larger than its parent's
   for(i in rev(seq_along(treeeList))){
     if(is.null(treeeList[[i]]$pruned)){ # Only loop over the unpruned nodes
+
       ## Get all terminal nodes
-      treeeList[[i]]$offsprings <- getTerminalNodes(currentIdx = i, treeeList = treeeList)
+      treeeList[[i]]$childrenTerminal <- getTerminalNodes(currentIdx = i, treeeList = treeeList)
+
       ## Get re-substitution error
-      treeeList[[i]]$offspringLoss <- sum(sapply(treeeList[[i]]$offsprings, function(idx) treeeList[[idx]]$currentLoss))
-      ## Get alpha: terminal nodes have NaN as their alpha
-      treeeList[[i]]$alpha <- (treeeList[[i]]$currentLoss - treeeList[[i]]$offspringLoss) / (length(treeeList[[i]]$offsprings) - 1)
-      ## Update alpha to be monotonic
-      childrenAlpha <- sapply(treeeList[[i]]$children, function(idx) treeeList[[idx]]$alpha)
-      #> In case that the tree is not root, but all alpha are the same
-      #> we add one to the root node alpha to separate them
-      treeeList[[i]]$alpha <- max(c(-1, treeeList[[i]]$alpha-1, unlist(childrenAlpha)), na.rm = TRUE) + 1
+      treeeList[[i]]$childrenTerminalLoss <- sum(sapply(treeeList[[i]]$childrenTerminal, function(idx) treeeList[[idx]]$currentLoss))
+      treeeList[[i]]$alpha <- getOneSidedPvalue(N = length(treeeList[[i]]$idxRow),
+                                                lossBefore = treeeList[[i]]$currentLoss,
+                                                lossAfter = treeeList[[i]]$childrenTerminalLoss)
     }
   }
-
   return(treeeList)
 }
 
-getTerminalNodes <- function(currentIdx, treeeList, keepNonTerminal = FALSE){
-  #> Get all terminal nodes that are offsprings from currentIdx
-  treeeNode <- treeeList[[currentIdx]]
-  if(is.null(treeeNode$children)){
-    return(currentIdx)
-  }else{
-    nonTerminalNodes <- if(keepNonTerminal) currentIdx
-    terminalNodes <- do.call(c, sapply(treeeNode$children,function(x) getTerminalNodes(currentIdx = x, treeeList = treeeList, keepNonTerminal = keepNonTerminal), simplify = FALSE))
-    return(c(nonTerminalNodes, terminalNodes))
-  }
+
+#' Calculate Mean and Standard Error of Tree Errors
+#'
+#' This function computes the mean and standard error of the errors from a list
+#' of decision trees.
+#'
+#' @noRd
+#'
+#' @param treeeListList A list of decision tree objects, where each tree
+#'   contains information about its error.
+#'
+getMeanAndSE <- function(treeeListList){
+  error <- sapply(treeeListList, getMeanAndSEhelper)
+  return(c(mean(error), stats::sd(error) / sqrt(length(treeeListList))))
 }
 
-getMeanAndSE <- function(treeeListList, idxCV, x, response){
-
-  error <- sapply(seq_along(treeeListList), function(i) sum(predict(object = treeeListList[[i]], newdata = x[idxCV==i,,drop = FALSE]) != response[idxCV==i]))
-
-  return(c(mean(error), sd(error) / sqrt(length(treeeListList))))
+getMeanAndSEhelper <- function(treeeList){
+  terminalIdx <- getTerminalNodes(currentIdx = 1, treeeList = treeeList)
+  return(sum(do.call(c, lapply(terminalIdx, function(i) treeeList[[i]]$CVerror))))
 }
 
 
+#' Calculate the Cut-off Alpha for Pruning
+#'
+#' This function calculates the cut-off alpha value for pruning the decision
+#' tree. The alpha value is computed from the internal (non-terminal) nodes of
+#' the tree, representing the improvement in loss after pruning. The geometric
+#' mean of the two largest alpha values is returned as the cut-off.
+#'
+#' @noRd
 getCutAlpha <- function(treeeList){
-  # get alpha for all terminal nodes
-  alphaList <- unique(sapply(treeeList, function(treeeNode) ifelse(is.null(treeeNode$children), NA, treeeNode$alpha)))
-  # Geometry average
-  return(exp(mean(log(sort(alphaList)[1:2]), na.rm = TRUE)))
+  internalIdx <- setdiff(getTerminalNodes(1, treeeList, keepNonTerminal = T),
+                         getTerminalNodes(1, treeeList, keepNonTerminal = F))
+  alphaList <- unique(do.call(c, lapply(internalIdx, function(i) treeeList[[i]]$alpha)))
+  alphaCandidates <- stats::na.omit(sort(alphaList, decreasing = TRUE)[1:2])
+
+  if(length(alphaCandidates) == 0) alphaCandidates <- 1
+  return(exp(mean(log(alphaCandidates))))
 }
 
+
+#' Prune a Decision Tree Based on Alpha
+#'
+#' This function prunes the decision tree by removing branches whose alpha
+#' values are greater than or equal to the given threshold. Pruning is performed
+#' on non-terminal nodes that meet the alpha condition, and their child nodes
+#' are marked as pruned. After pruning, the alpha values of the remaining nodes
+#' are updated.
+#'
+#' @noRd
 pruneTreee <- function(treeeList, alpha){
   for(i in rev(seq_along(treeeList))){
     treeeNode <- treeeList[[i]]
     # not yet pruned + non-terminal node + alpha below threshold
-    currentFlag <- is.null(treeeNode$pruned) & !is.null(treeeNode$children) & treeeNode$alpha <= alpha + 1e-10 # R rounding error, 1e-10 needed
+    currentFlag <- is.null(treeeNode$pruned) && !is.null(treeeNode$children) && treeeNode$alpha >= alpha - 1e-10 # R rounding error, 1e-10 needed
+
     if(currentFlag){
       allChildren <- getTerminalNodes(currentIdx = i, treeeList = treeeList, keepNonTerminal = TRUE)
       for(j in setdiff(allChildren, i)) {treeeList[[j]]$pruned <- TRUE}
@@ -135,14 +177,24 @@ pruneTreee <- function(treeeList, alpha){
 }
 
 
+#' Drop Pruned Nodes from a Decision Tree
+#'
+#' This function removes pruned nodes from the decision tree, keeping only
+#' terminal and relevant internal nodes. It reassigns the indices of the
+#' remaining nodes and updates their children and parent node references
+#' accordingly.
+#'
+#' @noRd
 dropNodes <- function(treeeList){
   finalNodeIdx <- sort(getTerminalNodes(treeeList = treeeList, currentIdx = 1, keepNonTerminal = TRUE))
   treeeList <- treeeList[finalNodeIdx]
-  class(treeeList) <- "SingleTreee"
+  class(treeeList) <- "Treee"
   for(i in seq_along(treeeList)){
-    treeeList[[i]]$currentIndex <- i
+    treeeList[[i]]$currentIndex <- i # re-assign the currentIndex
     if(!is.null(treeeList[[i]]$children)) {
       treeeList[[i]]$children <- sapply(treeeList[[i]]$children, function(x) which(finalNodeIdx == x))
+    }else{
+      if(treeeList[[i]]$stopInfo == "Normal") treeeList[[i]]$stopInfo = "Pruned"
     }
     treeeList[[i]]$parent <- which(finalNodeIdx == treeeList[[i]]$parent)
   }
@@ -150,3 +202,39 @@ dropNodes <- function(treeeList){
 }
 
 
+#' Retrieve Terminal Nodes in a Decision Tree
+#'
+#' This function retrieves all terminal (leaf) nodes that are descendants of a
+#' specified node in the decision tree. Optionally, intermediate nodes can also
+#' be included in the result.
+#'
+#' @noRd
+getTerminalNodes <- function(currentIdx, treeeList, keepNonTerminal = FALSE){
+  #> Get all terminal nodes that are offsprings from currentIdx
+  treeeNode <- treeeList[[currentIdx]]
+  if(is.null(treeeNode$children)){
+    return(currentIdx)
+  }else{
+    nonTerminalNodes <- if(keepNonTerminal) currentIdx
+    terminalNodes <- do.call(c, lapply(treeeNode$children,function(x) getTerminalNodes(currentIdx = x, treeeList = treeeList, keepNonTerminal = keepNonTerminal)))
+    return(c(nonTerminalNodes, terminalNodes))
+  }
+}
+
+
+pruneTreeeByLevel <- function(treeeList, K){
+  #> Internal exploration only
+  for(i in rev(seq_along(treeeList))){
+    treeeNode <- treeeList[[i]]
+    # not yet pruned + non-terminal node + alpha below threshold
+    currentFlag <- is.null(treeeNode$pruned) && !is.null(treeeNode$children) && treeeNode$currentLevel >= K # R rounding error, 1e-10 needed
+
+    if(currentFlag){
+      allChildren <- getTerminalNodes(currentIdx = i, treeeList = treeeList, keepNonTerminal = TRUE)
+      for(j in setdiff(allChildren, i)) {treeeList[[j]]$pruned <- TRUE}
+      treeeList[[i]]["children"] <- list(NULL) # cut the branch
+    }
+  }
+  treeeList <- dropNodes(treeeList = treeeList)
+  return(treeeList)
+}
